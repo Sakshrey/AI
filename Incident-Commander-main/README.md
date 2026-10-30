@@ -831,3 +831,19 @@ If you find this project useful or interesting, consider giving the repository a
 This project is intended for educational, portfolio, and demonstration purposes.
 
 AI-generated incident analysis should be independently verified by qualified engineers before being used for real production decisions.
+
+
+## Running locally
+
+Run these commands from this project directory (`Incident-Commander-main`),
+not from the outer ZIP/repository wrapper directory:
+
+```bash
+pip install -r requirements.txt
+streamlit run ui/streamlit_app.py
+```
+
+Python 3.12 or newer is required by `pyproject.toml`.
+
+For Live AI mode, configure `GROQ_API_KEY` in `.env` locally or in Streamlit
+Community Cloud Secrets. Never commit `.env` or publish your API key.

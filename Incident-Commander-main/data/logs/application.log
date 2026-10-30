@@ -1,0 +1,4 @@
+2026-09-04 14:25:01 ERROR database: connection pool exhausted (max=20)
+2026-09-04 14:25:02 ERROR api: request failed status=500 path=/orders
+2026-09-04 14:25:03 ERROR database: connection timeout after 30s
+2026-09-04 14:25:04 INFO api: GET /health status=200

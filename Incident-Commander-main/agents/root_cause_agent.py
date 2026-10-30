@@ -124,9 +124,6 @@ def root_cause_agent_node(
     )
 
     rag_text = _format_rag_context(rag_context)
-    rag_text = _format_rag_context(
-        rag_context
-    )
 
     prompt = f"""
 You are a Root Cause Analysis Agent.
@@ -201,9 +198,24 @@ MISSING_EVIDENCE:
 <short list of evidence needed for stronger confirmation>
 """
 
-    response = llm.invoke(prompt)
-
-    text = _extract_content(response)
+    try:
+        response = llm.invoke(prompt)
+        text = _extract_content(response)
+    except Exception as exc:
+        error_message = (
+            f"Root-cause analysis could not be generated because "
+            f"the LLM request failed: {type(exc).__name__}: {exc}"
+        )
+        return {
+            "root_cause": "RCA could not be generated because the LLM request failed.",
+            "confidence": 0.0,
+            "hypotheses": [],
+            "root_cause_rationale": error_message,
+            "missing_evidence": "A successful LLM response is required to generate the RCA.",
+            "root_cause_agent_message": error_message,
+            "investigation_status": "root_cause_analysis_failed",
+            "next_action": "critic_review",
+        }
 
     root_cause = ""
     confidence = 0.0
@@ -284,13 +296,6 @@ MISSING_EVIDENCE:
         0.0,
         min(1.0, confidence),
     )
-    evidence_confidence = _evidence_confidence(
-        state
-    )
-
-    if evidence_confidence > confidence:
-        confidence = evidence_confidence
-
     alternative_confidence = max(
         0.0,
         min(
@@ -382,54 +387,4 @@ if __name__ == "__main__":
             "root_cause",
             "",
         )
-    )
-def _evidence_confidence(
-    state: AegisIncidentState,
-) -> float:
-
-    score = 0.0
-
-    logs = state.get(
-        "log_findings",
-        []
-    )
-
-    database = state.get(
-        "database_findings",
-        []
-    )
-
-    deployments = state.get(
-        "deployment_findings",
-        []
-    )
-
-    correlations = state.get(
-        "correlations",
-        []
-    )
-
-    # HTTP 500 / database timeout evidence
-    if logs:
-        score += 0.20
-
-    # Database failure / pool exhaustion evidence
-    if database:
-        score += 0.25
-
-    # Deployment evidence
-    if deployments:
-        score += 0.20
-
-    # Temporal / cross-source correlation
-    if correlations:
-        score += 0.25
-
-    # Additional supporting RAG knowledge
-    if state.get("rag_context"):
-        score += 0.10
-
-    return min(
-        0.95,
-        score
     )

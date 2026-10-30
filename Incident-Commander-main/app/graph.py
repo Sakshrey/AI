@@ -17,6 +17,7 @@ from agents.correlation_agent import correlation_agent_node
 from agents.root_cause_agent import root_cause_agent_node
 from agents.critic_agent import critic_agent_node
 from agents.final_report_agent import final_report_agent_node
+from app.config import settings
 
 
 def add_event(
@@ -42,6 +43,16 @@ def add_event(
     )
 
     return history
+
+
+def agent_message(result: dict, fallback: str) -> str:
+    """Return the detailed message emitted by an agent node, if present."""
+    history = result.get("execution_history", [])
+    if history and isinstance(history[-1], dict):
+        message = history[-1].get("message")
+        if message:
+            return str(message)
+    return fallback
 
 
 # ---------------------------------------------------------
@@ -126,10 +137,7 @@ def log_step(
         state,
         "Log",
         "completed",
-        result.get(
-            "log_agent_message",
-            "Log investigation completed.",
-        ),
+        agent_message(result, "Log investigation completed."),
     )
 
     return {
@@ -155,10 +163,7 @@ def metrics_step(
         state,
         "Metrics",
         "completed",
-        result.get(
-            "metrics_agent_message",
-            "Metrics investigation completed.",
-        ),
+        agent_message(result, "Metrics investigation completed."),
     )
 
     return {
@@ -184,10 +189,7 @@ def database_step(
         state,
         "Database",
         "completed",
-        result.get(
-            "database_agent_message",
-            "Database investigation completed.",
-        ),
+        agent_message(result, "Database investigation completed."),
     )
 
     return {
@@ -213,10 +215,7 @@ def deployment_step(
         state,
         "Deployment",
         "completed",
-        result.get(
-            "deployment_agent_message",
-            "Deployment investigation completed.",
-        ),
+        agent_message(result, "Deployment investigation completed."),
     )
 
     return {
@@ -242,10 +241,7 @@ def correlation_step(
         state,
         "Correlation",
         "completed",
-        result.get(
-            "correlation_agent_message",
-            "Correlation analysis completed.",
-        ),
+        agent_message(result, "Correlation analysis completed."),
     )
 
     return {
@@ -597,11 +593,32 @@ def human_rework_step(
         message,
     )
 
+    limit_reached = iteration >= max(1, int(settings.max_iterations))
+
+    if limit_reached:
+        history = add_event(
+            {"execution_history": history},
+            "Workflow",
+            "stopped",
+            (
+                f"Maximum rework limit ({settings.max_iterations}) reached. "
+                "The report will be generated with the RCA marked as unapproved."
+            ),
+        )
+
     return {
         "iteration": iteration,
+        "human_decision": "rework_limit_reached" if limit_reached else state.get("human_decision", "rework"),
+        "investigation_status": "rework_limit_reached" if limit_reached else "human_rework_requested",
         "execution_history": history,
-        "next_action": "analyze_root_cause",
+        "next_action": "generate_final_report" if limit_reached else "analyze_root_cause",
     }
+
+
+def human_rework_router(state: AegisIncidentState) -> Literal["report", "root_cause"]:
+    if state.get("investigation_status") == "rework_limit_reached":
+        return "report"
+    return "root_cause"
 
 
 # ---------------------------------------------------------
@@ -790,9 +807,13 @@ workflow.add_conditional_edges(
 # Human requested RCA rework
 # ---------------------------------------------------------
 
-workflow.add_edge(
+workflow.add_conditional_edges(
     "human_rework",
-    "root_cause",
+    human_rework_router,
+    {
+        "root_cause": "root_cause",
+        "report": "report",
+    },
 )
 
 

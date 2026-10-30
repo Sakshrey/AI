@@ -43,7 +43,7 @@ def get_llm() -> ChatGroq:
         model=settings.llm_model,
         groq_api_key=api_key,
         temperature=0,
-        max_retries=0,
+        max_retries=2,
         timeout=60,
     )
 
