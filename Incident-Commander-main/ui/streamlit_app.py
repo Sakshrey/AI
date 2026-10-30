@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import sys
 import uuid
 from pathlib import Path
@@ -10,7 +11,13 @@ from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import Command
 
+# ============================================================
+# PROJECT PATH
+# ============================================================
+
 ROOT_DIR = Path(__file__).resolve().parent.parent
+os.chdir(ROOT_DIR)
+
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
@@ -27,6 +34,9 @@ from app.graph import (
     report_step,
 )
 
+# ============================================================
+# PAGE CONFIGURATION
+# ============================================================
 
 st.set_page_config(
     page_title="AI Software Incident Commander",
@@ -35,19 +45,18 @@ st.set_page_config(
 )
 
 st.title("🚨 AI Software Incident Commander")
+
 st.caption(
     "Multi-agent incident investigation, root-cause analysis, "
     "critic review, and human-in-the-loop approval"
 )
 
-
 # ============================================================
 # OFFLINE DEMO NODES
 # ============================================================
 
-def demo_rag_step(
-    state: AegisIncidentState,
-) -> dict[str, Any]:
+def demo_rag_step(state: AegisIncidentState) -> dict[str, Any]:
+
     return {
         "rag_context": [
             {
@@ -82,94 +91,161 @@ def demo_rag_step(
 def demo_root_cause_step(
     state: AegisIncidentState,
 ) -> dict[str, Any]:
-    feedback = state.get("human_feedback", "")
-    iteration = int(
-        state.get(
-            "iteration",
-            0,
-        )
-    )
 
-    if feedback:
-        rationale = (
-            "The RCA was revised using human review feedback. "
-            "The deployment timing is treated as supporting evidence "
-            "rather than proof of causation. The evidence that should "
-            "be verified includes the production connection-pool "
-            "configuration, deployment configuration, and database "
-            "connection-limit metrics around deployment v2.4.1."
-        )
+    feedback = state.get("human_feedback", "")
+    iteration = int(state.get("iteration", 0))
+
+    logs = state.get("logs", []) or []
+    metrics = state.get("metrics", []) or []
+    database_events = state.get("database_events", []) or []
+    deployments = state.get("deployments", []) or []
+    correlations = state.get("correlations", []) or []
+
+    evidence_counts = {
+        "logs": len(logs),
+        "metrics": len(metrics),
+        "database": len(database_events),
+        "deployments": len(deployments),
+        "correlations": len(correlations),
+    }
+
+    available_sources = [
+        name
+        for name, count in evidence_counts.items()
+        if count > 0
+    ]
+
+    if not available_sources:
 
         root_cause = (
-            "Database connection pool exhaustion associated with the "
-            "database-related changes in deployment v2.4.1 caused "
-            "the API HTTP 500 errors; direct causation should be "
-            "confirmed by verifying the production pool configuration "
-            "and connection-limit metrics."
+            "Insufficient evidence to determine the root cause. "
+            "The investigation did not load any log, metric, database, "
+            "deployment, or correlation records."
         )
+
+        rationale = (
+            "No investigation evidence was available. The database "
+            "connection-pool hypothesis must not be presented as "
+            "confirmed until the data sources are loaded and "
+            "relevant records are examined."
+        )
+
+        confidence = 0.0
+
+        missing_evidence = (
+            "Load application logs, API metrics, database events, "
+            "deployment history, and timestamp-based correlations "
+            "before selecting a root cause."
+        )
+
+        hypotheses = []
 
     else:
-        rationale = (
-            "Logs, database events, deployment evidence, metrics, "
-            "RAG context, and temporal correlations support the "
-            "database connection pool exhaustion hypothesis."
-        )
 
         root_cause = (
-            "Database connection pool misconfiguration introduced "
-            "in deployment v2.4.1 caused connection pool exhaustion "
-            "and subsequent HTTP 500 errors."
+            "Database connection-pool exhaustion is a candidate "
+            "explanation for the API HTTP 500 errors. Check the "
+            "loaded database, log, metric, and deployment records; "
+            "this demo result is not proof of direct causation."
+        )
+
+        rationale = (
+            "The following evidence sources were loaded: "
+            + ", ".join(available_sources)
+            + ". The demo hypothesis is based on the sample incident "
+            "dataset. Verify exact timestamps and production "
+            "connection-pool settings before treating the deployment "
+            "as the cause."
+        )
+
+        confidence = min(
+            0.75,
+            0.15 * len(available_sources),
+        )
+
+        missing_evidence = (
+            "Verify production pool-size and connection-limit "
+            "configuration, exact deployment timing, and whether "
+            "pool exhaustion precedes the HTTP 500 spike."
+        )
+
+        hypotheses = [
+            {
+                "type": "candidate",
+                "root_cause": root_cause,
+                "confidence": confidence,
+                "rationale": rationale,
+                "missing_evidence": missing_evidence,
+                "evidence_counts": evidence_counts,
+            }
+        ]
+
+    if feedback:
+
+        rationale += (
+            " Human reviewer feedback was considered: "
+            + feedback
         )
 
     return {
         "root_cause": root_cause,
-        "confidence": 0.95 if feedback else 0.90,
-        "hypotheses": [
-            {
-                "type": "primary",
-                "root_cause": root_cause,
-                "confidence": 0.95 if feedback else 0.90,
-                "rationale": rationale,
-                "missing_evidence": (
-                    "Verify production database connection-pool "
-                    "configuration, deployment configuration, and "
-                    "connection-limit metrics around v2.4.1."
-                ),
-            },
-            {
-                "type": "alternative",
-                "root_cause": (
-                    "A downstream database dependency failure may "
-                    "have independently contributed to the HTTP 500 errors."
-                ),
-                "confidence": 0.25,
-            },
-        ],
+        "confidence": confidence,
+        "hypotheses": hypotheses,
         "root_cause_rationale": rationale,
-        "missing_evidence": (
-            "Verify production connection-pool configuration and "
-            "database connection-limit metrics."
-        ),
+        "missing_evidence": missing_evidence,
         "root_cause_agent_message": (
-            "Offline demonstration RCA generated successfully."
+            "Offline demo RCA generated using loaded evidence counts: "
+            + str(evidence_counts)
         ),
         "investigation_status": "root_cause_analysis_complete",
         "next_action": "critic_review",
         "iteration": iteration,
+        "demo_evidence_counts": evidence_counts,
     }
 
 
 def demo_critic_step(
     state: AegisIncidentState,
 ) -> dict[str, Any]:
+
+    counts = state.get("demo_evidence_counts", {}) or {}
+
+    total_records = sum(
+        int(value or 0)
+        for value in counts.values()
+    )
+
+    if total_records == 0:
+
+        verdict = "REWORK"
+
+        feedback = (
+            "Verdict: REWORK. No log, metric, database, deployment, "
+            "or correlation records were loaded. The proposed root "
+            "cause is unsupported. Fix data loading and rerun the "
+            "investigation before approving an RCA."
+        )
+
+    else:
+
+        verdict = "PASS WITH CAVEAT"
+
+        feedback = (
+            "Verdict: PASS WITH CAVEAT. Sample evidence records were "
+            "loaded from the following sources: "
+            + ", ".join(
+                name
+                for name, count in counts.items()
+                if count
+            )
+            + ". This supports investigating database connection-pool "
+            "exhaustion, but does not establish direct causation. "
+            "Verify production configuration and exact event timing."
+        )
+
     return {
-        "critic_feedback": (
-            "Verdict: PASS. The root cause is supported by multiple "
-            "independent evidence sources. Human feedback was incorporated "
-            "and direct causation should be verified using production "
-            "configuration and connection-limit evidence."
-        ),
-        "critic_verdict": "PASS",
+        "critic_feedback": feedback,
+        "critic_verdict": verdict,
         "investigation_status": "critic_review_complete",
         "next_action": "generate_final_report",
     }
@@ -181,112 +257,31 @@ def demo_critic_step(
 
 @st.cache_resource
 def get_offline_graph():
+
     workflow = StateGraph(AegisIncidentState)
 
-    workflow.add_node(
-        "supervisor",
-        supervisor_step,
-    )
+    workflow.add_node("supervisor", supervisor_step)
+    workflow.add_node("rag", demo_rag_step)
+    workflow.add_node("logs", log_step)
+    workflow.add_node("metrics", metrics_step)
+    workflow.add_node("database", database_step)
+    workflow.add_node("deployment", deployment_step)
+    workflow.add_node("correlation", correlation_step)
+    workflow.add_node("root_cause", demo_root_cause_step)
+    workflow.add_node("critic", demo_critic_step)
+    workflow.add_node("human_review", human_review_step)
+    workflow.add_node("human_rework", human_rework_step)
+    workflow.add_node("report", report_step)
 
-    workflow.add_node(
-        "rag",
-        demo_rag_step,
-    )
-
-    workflow.add_node(
-        "logs",
-        log_step,
-    )
-
-    workflow.add_node(
-        "metrics",
-        metrics_step,
-    )
-
-    workflow.add_node(
-        "database",
-        database_step,
-    )
-
-    workflow.add_node(
-        "deployment",
-        deployment_step,
-    )
-
-    workflow.add_node(
-        "correlation",
-        correlation_step,
-    )
-
-    workflow.add_node(
-        "root_cause",
-        demo_root_cause_step,
-    )
-
-    workflow.add_node(
-        "critic",
-        demo_critic_step,
-    )
-
-    workflow.add_node(
-        "human_review",
-        human_review_step,
-    )
-
-    workflow.add_node(
-        "human_rework",
-        human_rework_step,
-    )
-
-    workflow.add_node(
-        "report",
-        report_step,
-    )
-
-    workflow.add_edge(
-        START,
-        "supervisor",
-    )
-
-    workflow.add_edge(
-        "supervisor",
-        "rag",
-    )
-
-    workflow.add_edge(
-        "rag",
-        "logs",
-    )
-
-    workflow.add_edge(
-        "logs",
-        "metrics",
-    )
-
-    workflow.add_edge(
-        "metrics",
-        "database",
-    )
-
-    workflow.add_edge(
-        "database",
-        "deployment",
-    )
-
-    workflow.add_edge(
-        "deployment",
-        "correlation",
-    )
-
-    workflow.add_edge(
-        "correlation",
-        "root_cause",
-    )
-
-    workflow.add_edge(
-        "root_cause",
-        "critic",
-    )
+    workflow.add_edge(START, "supervisor")
+    workflow.add_edge("supervisor", "rag")
+    workflow.add_edge("rag", "logs")
+    workflow.add_edge("logs", "metrics")
+    workflow.add_edge("metrics", "database")
+    workflow.add_edge("database", "deployment")
+    workflow.add_edge("deployment", "correlation")
+    workflow.add_edge("correlation", "root_cause")
+    workflow.add_edge("root_cause", "critic")
 
     workflow.add_conditional_edges(
         "critic",
@@ -296,9 +291,8 @@ def get_offline_graph():
         },
     )
 
-    def human_route(
-        state: AegisIncidentState,
-    ):
+    def human_route(state: AegisIncidentState):
+
         if state.get("human_decision") == "rework":
             return "human_rework"
 
@@ -313,15 +307,8 @@ def get_offline_graph():
         },
     )
 
-    workflow.add_edge(
-        "human_rework",
-        "root_cause",
-    )
-
-    workflow.add_edge(
-        "report",
-        END,
-    )
+    workflow.add_edge("human_rework", "root_cause")
+    workflow.add_edge("report", END)
 
     return workflow.compile(
         checkpointer=MemorySaver()
@@ -349,6 +336,7 @@ if "mode" not in st.session_state:
 
 
 def get_config():
+
     return {
         "configurable": {
             "thread_id": st.session_state["thread_id"]
@@ -356,23 +344,25 @@ def get_config():
     }
 
 
-def save_result(
-    result: dict[str, Any],
-):
+def save_result(result: dict[str, Any]):
+
     st.session_state["result"] = result
 
     if "__interrupt__" in result:
+
         interrupt = result["__interrupt__"][0]
 
         st.session_state["awaiting_review"] = True
         st.session_state["interrupt_data"] = interrupt.value
 
     else:
+
         st.session_state["awaiting_review"] = False
         st.session_state["interrupt_data"] = None
 
 
 def reset_investigation():
+
     st.session_state["result"] = None
     st.session_state["thread_id"] = None
     st.session_state["awaiting_review"] = False
@@ -422,9 +412,7 @@ with st.sidebar:
 
     if mode == "Offline / Demo":
 
-        st.success(
-            "Demo mode: 0 Groq API calls"
-        )
+        st.success("Demo mode: 0 Groq API calls")
 
     else:
 
@@ -436,6 +424,7 @@ with st.sidebar:
         "🔄 Reset Investigation",
         use_container_width=True,
     ):
+
         reset_investigation()
         st.rerun()
 
@@ -494,21 +483,18 @@ if st.button(
 ):
 
     if not incident_id.strip():
-        st.error(
-            "Please enter an Incident ID."
-        )
+
+        st.error("Please enter an Incident ID.")
         st.stop()
 
     if not service.strip():
-        st.error(
-            "Please enter a service name."
-        )
+
+        st.error("Please enter a service name.")
         st.stop()
 
     if not description.strip():
-        st.error(
-            "Please enter an incident description."
-        )
+
+        st.error("Please enter an incident description.")
         st.stop()
 
     reset_investigation()
@@ -517,14 +503,6 @@ if st.button(
         f"streamlit-{incident_id.strip()}-"
         f"{uuid.uuid4().hex[:8]}"
     )
-
-    # --------------------------------------------------------
-    # IMPORTANT:
-    # Explicitly store the selected execution mode.
-    #
-    # This allows the Final Report Agent to distinguish
-    # between Live AI and Offline / Demo execution.
-    # --------------------------------------------------------
 
     execution_mode = (
         "live"
@@ -537,12 +515,9 @@ if st.button(
         "description": description.strip(),
         "service": service.strip(),
         "severity": severity,
-
         "execution_mode": execution_mode,
-
         "iteration": 0,
         "execution_history": [],
-
         "logs": [],
         "metrics": [],
         "database_events": [],
@@ -574,12 +549,8 @@ if st.button(
 
         except Exception as exc:
 
-            st.error(
-                "Investigation failed."
-            )
-
+            st.error("Investigation failed.")
             st.exception(exc)
-
             st.stop()
 
     st.rerun()
@@ -589,9 +560,7 @@ if st.button(
 # GET RESULT
 # ============================================================
 
-result = st.session_state.get(
-    "result"
-)
+result = st.session_state.get("result")
 
 if not result:
 
@@ -607,22 +576,16 @@ if not result:
 # HUMAN REVIEW
 # ============================================================
 
-if st.session_state.get(
-    "awaiting_review"
-):
+if st.session_state.get("awaiting_review"):
 
     interrupt_data = (
-        st.session_state.get(
-            "interrupt_data"
-        )
+        st.session_state.get("interrupt_data")
         or {}
     )
 
     st.divider()
 
-    st.header(
-        "🧑 Human Review Required"
-    )
+    st.header("🧑 Human Review Required")
 
     st.warning(
         "The AI investigation is paused. Review the proposed "
@@ -633,32 +596,21 @@ if st.session_state.get(
 
     with review_col1:
 
-        st.markdown(
-            "### 🎯 Proposed Root Cause"
-        )
+        st.markdown("### 🎯 Proposed Root Cause")
 
         st.info(
             interrupt_data.get(
                 "root_cause",
-                result.get(
-                    "root_cause",
-                    "Not available.",
-                ),
+                result.get("root_cause", "Not available."),
             )
         )
 
         confidence = interrupt_data.get(
             "confidence",
-            result.get(
-                "confidence",
-                0.0,
-            ),
+            result.get("confidence", 0.0),
         )
 
-        if isinstance(
-            confidence,
-            (int, float),
-        ):
+        if isinstance(confidence, (int, float)):
 
             st.metric(
                 "RCA Confidence",
@@ -674,9 +626,7 @@ if st.session_state.get(
 
     with review_col2:
 
-        st.markdown(
-            "### 🧐 Critic Review"
-        )
+        st.markdown("### 🧐 Critic Review")
 
         st.write(
             interrupt_data.get(
@@ -688,46 +638,27 @@ if st.session_state.get(
             )
         )
 
-    st.markdown(
-        "### 🔍 Evidence to Verify"
-    )
+    st.markdown("### 🔍 Evidence to Verify")
 
     missing_evidence = result.get(
         "missing_evidence",
         "Verify the production database connection-pool configuration.",
     )
 
-    st.info(
-        missing_evidence
-    )
+    st.info(missing_evidence)
 
-    hypotheses = result.get(
-        "hypotheses",
-        [],
-    )
+    hypotheses = result.get("hypotheses", [])
 
     if hypotheses:
 
-        with st.expander(
-            "View Hypotheses"
-        ):
+        with st.expander("View Hypotheses"):
 
             for hypothesis in hypotheses:
 
-                if isinstance(
-                    hypothesis,
-                    dict,
-                ):
-
-                    st.json(
-                        hypothesis
-                    )
-
+                if isinstance(hypothesis, dict):
+                    st.json(hypothesis)
                 else:
-
-                    st.write(
-                        hypothesis
-                    )
+                    st.write(hypothesis)
 
     feedback = st.text_area(
         "Reviewer Feedback",
@@ -773,9 +704,7 @@ if st.session_state.get(
                         config=get_config(),
                     )
 
-                    save_result(
-                        resumed
-                    )
+                    save_result(resumed)
 
                 except Exception as exc:
 
@@ -783,10 +712,7 @@ if st.session_state.get(
                         "Unable to approve the investigation."
                     )
 
-                    st.exception(
-                        exc
-                    )
-
+                    st.exception(exc)
                     st.stop()
 
             st.rerun()
@@ -823,9 +749,7 @@ if st.session_state.get(
                             config=get_config(),
                         )
 
-                        save_result(
-                            resumed
-                        )
+                        save_result(resumed)
 
                     except Exception as exc:
 
@@ -833,10 +757,7 @@ if st.session_state.get(
                             "Unable to request RCA rework."
                         )
 
-                        st.exception(
-                            exc
-                        )
-
+                        st.exception(exc)
                         st.stop()
 
                 st.rerun()
@@ -850,9 +771,7 @@ if st.session_state.get(
 
 st.divider()
 
-st.header(
-    "🔎 Investigation Result"
-)
+st.header("🔎 Investigation Result")
 
 status = result.get(
     "investigation_status",
@@ -869,30 +788,16 @@ result_service = result.get(
     service,
 )
 
-confidence = result.get(
-    "confidence",
-    0,
-)
+confidence = result.get("confidence", 0)
+iterations = result.get("iteration", 0)
 
-iterations = result.get(
-    "iteration",
-    0,
-)
+if isinstance(confidence, (int, float)):
 
-if isinstance(
-    confidence,
-    (int, float),
-):
-
-    confidence_percent = (
-        f"{confidence * 100:.0f}%"
-    )
+    confidence_percent = f"{confidence * 100:.0f}%"
 
 else:
 
-    confidence_percent = str(
-        confidence
-    )
+    confidence_percent = str(confidence)
 
 
 if status in {
@@ -900,15 +805,11 @@ if status in {
     "final_report_complete",
 }:
 
-    st.success(
-        "✅ Investigation completed"
-    )
+    st.success("✅ Investigation completed")
 
 else:
 
-    st.warning(
-        f"Investigation status: {status}"
-    )
+    st.warning(f"Investigation status: {status}")
 
 
 # ============================================================
@@ -919,40 +820,26 @@ col1, col2, col3, col4 = st.columns(4)
 
 with col1:
 
-    st.metric(
-        "Incident",
-        result_incident_id,
-    )
+    st.metric("Incident", result_incident_id)
 
 with col2:
 
-    st.metric(
-        "Service",
-        result_service,
-    )
+    st.metric("Service", result_service)
 
 with col3:
 
-    st.metric(
-        "Confidence",
-        confidence_percent,
-    )
+    st.metric("Confidence", confidence_percent)
 
 with col4:
 
-    st.metric(
-        "Iterations",
-        iterations,
-    )
+    st.metric("Iterations", iterations)
 
 
 # ============================================================
 # ROOT CAUSE
 # ============================================================
 
-st.subheader(
-    "🎯 Root Cause"
-)
+st.subheader("🎯 Root Cause")
 
 st.info(
     result.get(
@@ -961,29 +848,20 @@ st.info(
     )
 )
 
-rationale = result.get(
-    "root_cause_rationale",
-    "",
-)
+rationale = result.get("root_cause_rationale", "")
 
 if rationale:
 
-    with st.expander(
-        "Why this RCA was selected"
-    ):
+    with st.expander("Why this RCA was selected"):
 
-        st.write(
-            rationale
-        )
+        st.write(rationale)
 
 
 # ============================================================
 # CRITIC
 # ============================================================
 
-st.subheader(
-    "🧐 Critic Review"
-)
+st.subheader("🧐 Critic Review")
 
 st.write(
     result.get(
@@ -997,152 +875,73 @@ st.write(
 # HUMAN DECISION
 # ============================================================
 
-human_decision = result.get(
-    "human_decision"
-)
+human_decision = result.get("human_decision")
 
 if human_decision:
 
     if human_decision == "approve":
 
-        st.success(
-            "🧑 Human Decision: APPROVED"
-        )
+        st.success("🧑 Human Decision: APPROVED")
 
     else:
 
         st.warning(
-            f"🧑 Human Decision: "
-            f"{human_decision.upper()}"
+            f"🧑 Human Decision: {human_decision.upper()}"
         )
 
-human_feedback = result.get(
-    "human_feedback"
-)
+human_feedback = result.get("human_feedback")
 
 if human_feedback:
 
-    with st.expander(
-        "Human Reviewer Feedback"
-    ):
+    with st.expander("Human Reviewer Feedback"):
 
-        st.write(
-            human_feedback
-        )
+        st.write(human_feedback)
 
 
 # ============================================================
 # EVIDENCE SUMMARY
 # ============================================================
 
-st.subheader(
-    "🔎 Investigation Evidence"
-)
+st.subheader("🔎 Investigation Evidence")
 
-logs = result.get(
-    "logs",
-    [],
-)
-
-metrics = result.get(
-    "metrics",
-    [],
-)
-
-database_events = result.get(
-    "database_events",
-    [],
-)
-
-deployments = result.get(
-    "deployments",
-    [],
-)
-
-correlations = result.get(
-    "correlations",
-    [],
-)
-
-hypotheses = result.get(
-    "hypotheses",
-    [],
-)
-
+logs = result.get("logs", []) or []
+metrics = result.get("metrics", []) or []
+database_events = result.get("database_events", []) or []
+deployments = result.get("deployments", []) or []
+correlations = result.get("correlations", []) or []
+hypotheses = result.get("hypotheses", []) or []
 
 col1, col2, col3, col4, col5, col6 = st.columns(6)
 
 with col1:
-
-    st.metric(
-        "Logs",
-        len(logs),
-    )
+    st.metric("Logs", len(logs))
 
 with col2:
-
-    st.metric(
-        "Metrics",
-        len(metrics),
-    )
+    st.metric("Metrics", len(metrics))
 
 with col3:
-
-    st.metric(
-        "Database",
-        len(database_events),
-    )
+    st.metric("Database", len(database_events))
 
 with col4:
-
-    st.metric(
-        "Deployments",
-        len(deployments),
-    )
+    st.metric("Deployments", len(deployments))
 
 with col5:
-
-    st.metric(
-        "Correlations",
-        len(correlations),
-    )
+    st.metric("Correlations", len(correlations))
 
 with col6:
-
-    st.metric(
-        "Hypotheses",
-        len(hypotheses),
-    )
+    st.metric("Hypotheses", len(hypotheses))
 
 
 # ============================================================
 # FINDINGS
 # ============================================================
 
-st.subheader(
-    "📌 Findings"
-)
+st.subheader("📌 Findings")
 
-log_findings = result.get(
-    "log_findings",
-    [],
-)
-
-metrics_findings = result.get(
-    "metrics_findings",
-    [],
-)
-
-database_findings = result.get(
-    "database_findings",
-    [],
-)
-
-deployment_findings = result.get(
-    "deployment_findings",
-    [],
-)
-
+log_findings = result.get("log_findings", []) or []
+metrics_findings = result.get("metrics_findings", []) or []
+database_findings = result.get("database_findings", []) or []
+deployment_findings = result.get("deployment_findings", []) or []
 
 tabs = st.tabs(
     [
@@ -1161,26 +960,16 @@ with tabs[0]:
     if log_findings:
 
         for finding in log_findings:
-
-            st.write(
-                f"• {finding}"
-            )
+            st.write(f"• {finding}")
 
     else:
 
-        st.info(
-            "No log findings available."
-        )
+        st.info("No log findings available.")
 
     if logs:
 
-        with st.expander(
-            "View Raw Logs"
-        ):
-
-            st.json(
-                logs
-            )
+        with st.expander("View Raw Logs"):
+            st.json(logs)
 
 
 with tabs[1]:
@@ -1188,26 +977,16 @@ with tabs[1]:
     if metrics_findings:
 
         for finding in metrics_findings:
-
-            st.write(
-                f"• {finding}"
-            )
+            st.write(f"• {finding}")
 
     else:
 
-        st.info(
-            "No metric findings available."
-        )
+        st.info("No metric findings available.")
 
     if metrics:
 
-        with st.expander(
-            "View Raw Metrics"
-        ):
-
-            st.json(
-                metrics
-            )
+        with st.expander("View Raw Metrics"):
+            st.json(metrics)
 
 
 with tabs[2]:
@@ -1215,26 +994,16 @@ with tabs[2]:
     if database_findings:
 
         for finding in database_findings:
-
-            st.write(
-                f"• {finding}"
-            )
+            st.write(f"• {finding}")
 
     else:
 
-        st.info(
-            "No database findings available."
-        )
+        st.info("No database findings available.")
 
     if database_events:
 
-        with st.expander(
-            "View Raw Database Events"
-        ):
-
-            st.json(
-                database_events
-            )
+        with st.expander("View Raw Database Events"):
+            st.json(database_events)
 
 
 with tabs[3]:
@@ -1242,26 +1011,16 @@ with tabs[3]:
     if deployment_findings:
 
         for finding in deployment_findings:
-
-            st.write(
-                f"• {finding}"
-            )
+            st.write(f"• {finding}")
 
     else:
 
-        st.info(
-            "No deployment findings available."
-        )
+        st.info("No deployment findings available.")
 
     if deployments:
 
-        with st.expander(
-            "View Raw Deployments"
-        ):
-
-            st.json(
-                deployments
-            )
+        with st.expander("View Raw Deployments"):
+            st.json(deployments)
 
 
 with tabs[4]:
@@ -1269,16 +1028,11 @@ with tabs[4]:
     if correlations:
 
         for correlation in correlations:
-
-            st.write(
-                f"• {correlation}"
-            )
+            st.write(f"• {correlation}")
 
     else:
 
-        st.info(
-            "No correlations available."
-        )
+        st.info("No correlations available.")
 
 
 with tabs[5]:
@@ -1287,40 +1041,23 @@ with tabs[5]:
 
         for hypothesis in hypotheses:
 
-            if isinstance(
-                hypothesis,
-                dict,
-            ):
-
-                st.json(
-                    hypothesis
-                )
-
+            if isinstance(hypothesis, dict):
+                st.json(hypothesis)
             else:
-
-                st.write(
-                    f"• {hypothesis}"
-                )
+                st.write(f"• {hypothesis}")
 
     else:
 
-        st.info(
-            "No hypotheses available."
-        )
+        st.info("No hypotheses available.")
 
 
 # ============================================================
 # AGENT TIMELINE
 # ============================================================
 
-st.subheader(
-    "🤖 Agent Investigation Timeline"
-)
+st.subheader("🤖 Agent Investigation Timeline")
 
-execution_history = result.get(
-    "execution_history",
-    [],
-)
+execution_history = result.get("execution_history", []) or []
 
 st.caption(
     f"{len(execution_history)} agent events "
@@ -1334,70 +1071,39 @@ if execution_history:
         start=1,
     ):
 
-        if isinstance(
-            event,
-            dict,
-        ):
+        if isinstance(event, dict):
 
-            agent = event.get(
-                "agent",
-                "Agent",
-            )
-
-            status_value = event.get(
-                "status",
-                "completed",
-            )
-
-            message = event.get(
-                "message",
-                "",
-            )
+            agent = event.get("agent", "Agent")
+            status_value = event.get("status", "completed")
+            message = event.get("message", "")
 
             if status_value == "completed":
-
                 icon = "✅"
-
             elif status_value == "started":
-
                 icon = "🔵"
-
             elif status_value == "rework":
-
                 icon = "🔄"
-
             elif status_value == "failed":
-
                 icon = "❌"
-
             else:
-
                 icon = "⚪"
 
-            with st.container(
-                border=True
-            ):
+            with st.container(border=True):
 
                 st.markdown(
                     f"### {icon} {index}. {agent} Agent"
                 )
 
                 st.caption(
-                    f"Status: "
-                    f"{status_value.upper()}"
+                    f"Status: {status_value.upper()}"
                 )
 
                 if message:
-
-                    st.write(
-                        message
-                    )
+                    st.write(message)
 
         else:
 
-            with st.container(
-                border=True
-            ):
+            with st.container(border=True):
 
                 st.markdown(
                     f"### ✅ {index}. {event}"
@@ -1405,9 +1111,7 @@ if execution_history:
 
 else:
 
-    st.info(
-        "No agent execution information available."
-    )
+    st.info("No agent execution information available.")
 
 
 # ============================================================
@@ -1416,20 +1120,13 @@ else:
 
 st.divider()
 
-st.header(
-    "📋 Final Incident Report"
-)
+st.header("📋 Final Incident Report")
 
-final_report = result.get(
-    "final_report",
-    "",
-)
+final_report = result.get("final_report", "")
 
 if final_report:
 
-    st.markdown(
-        final_report
-    )
+    st.markdown(final_report)
 
     st.download_button(
         label="📥 Download Incident Report",
@@ -1445,8 +1142,7 @@ if final_report:
 else:
 
     st.warning(
-        "The Final Report Agent did not "
-        "produce a final report."
+        "The Final Report Agent did not produce a final report."
     )
 
 
