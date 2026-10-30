@@ -1,18 +1,32 @@
+
 from __future__ import annotations
 
 import os
 from dataclasses import dataclass
 
+import streamlit as st
 from dotenv import load_dotenv
 
 load_dotenv()
 
 
+# ============================================================
+# GROQ API KEY CONFIGURATION
+# ============================================================
+
+try:
+    GROQ_KEY = st.secrets.get("GROQ_API_KEY", "")
+except Exception:
+    GROQ_KEY = os.getenv("GROQ_API_KEY", "")
+
+
 @dataclass(frozen=True)
 class Settings:
+
     # ============================================================
     # APPLICATION
     # ============================================================
+
     app_env: str = os.getenv(
         "APP_ENV",
         "development",
@@ -26,6 +40,7 @@ class Settings:
     # ============================================================
     # LLM CONFIGURATION
     # ============================================================
+
     llm_provider: str = os.getenv(
         "LLM_PROVIDER",
         "groq",
@@ -39,14 +54,13 @@ class Settings:
     # ============================================================
     # GROQ API
     # ============================================================
-    groq_api_key: str = os.getenv(
-        "GROQ_API_KEY",
-        "",
-    )
+
+    groq_api_key: str = GROQ_KEY
 
     # ============================================================
     # INCIDENT INVESTIGATION
     # ============================================================
+
     max_evidence_items: int = int(
         os.getenv(
             "MAX_EVIDENCE_ITEMS",
@@ -61,7 +75,6 @@ class Settings:
         )
     )
 
-    # Maximum number of root-cause investigation iterations.
     max_iterations: int = int(
         os.getenv(
             "MAX_ITERATIONS",
@@ -72,6 +85,7 @@ class Settings:
     # ============================================================
     # RAG CONFIGURATION
     # ============================================================
+
     rag_enabled: bool = (
         os.getenv(
             "RAG_ENABLED",
@@ -95,6 +109,7 @@ class Settings:
     # ============================================================
     # HUMAN-IN-THE-LOOP CONFIGURATION
     # ============================================================
+
     hitl_enabled: bool = (
         os.getenv(
             "HITL_ENABLED",
@@ -103,8 +118,6 @@ class Settings:
         == "true"
     )
 
-    # Require human review when the critic requests rework
-    # or when confidence is below the configured threshold.
     hitl_require_on_rework: bool = (
         os.getenv(
             "HITL_REQUIRE_ON_REWORK",
@@ -123,6 +136,7 @@ class Settings:
     # ============================================================
     # DATA DIRECTORIES
     # ============================================================
+
     data_dir: str = os.getenv(
         "DATA_DIR",
         "data",
