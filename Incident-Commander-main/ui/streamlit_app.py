@@ -208,7 +208,13 @@ def demo_critic_step(
     state: AegisIncidentState,
 ) -> dict[str, Any]:
 
-    counts = state.get("demo_evidence_counts", {}) or {}
+    counts = {
+    "logs": len(state.get("logs") or []),
+    "metrics": len(state.get("metrics") or []),
+    "database": len(state.get("database_events") or []),
+    "deployments": len(state.get("deployments") or []),
+    "correlations": len(state.get("correlations") or []),
+}
 
     total_records = sum(
         int(value or 0)
