@@ -1,3 +1,4 @@
+
 from __future__ import annotations
 
 import re
@@ -20,7 +21,6 @@ def _format_rag_context(
             document.get("content", "")
         )
 
-        # Keep RAG context small.
         content = content[:2500]
 
         sections.append(
@@ -79,44 +79,18 @@ def root_cause_agent_node(
     state: AegisIncidentState,
 ) -> dict:
     """
-    Generate the most likely root cause using the
+    Generate the most likely root cause using
     summarized investigation evidence.
-
-    The prompt intentionally avoids sending all raw
-    data and full RAG documents to reduce token usage.
     """
 
     llm = get_llm()
 
-    log_findings = state.get(
-        "log_findings",
-        [],
-    )
-
-    metrics_findings = state.get(
-        "metrics_findings",
-        [],
-    )
-
-    database_findings = state.get(
-        "database_findings",
-        [],
-    )
-
-    deployment_findings = state.get(
-        "deployment_findings",
-        [],
-    )
-
-    correlations = state.get(
-        "correlations",
-        [],
-    )
-
-    rag_context = state.get(
-        "rag_context",
-        [],
-    )
+    log_findings = state.get("log_findings", [])
+    metrics_findings = state.get("metrics_findings", [])
+    database_findings = state.get("database_findings", [])
+    deployment_findings = state.get("deployment_findings", [])
+    correlations = state.get("correlations", [])
+    rag_context = state.get("rag_context", [])
 
     human_feedback = state.get(
         "human_feedback",
@@ -134,28 +108,24 @@ IMPORTANT:
 - Do not invent evidence.
 - RAG documents are supporting knowledge, not proof.
 - Correlation is not automatically causation.
-- Prefer the hypothesis supported by multiple independent evidence sources.
+- Prefer hypotheses supported by multiple independent sources.
 - Do not use confidence 0.0 merely because absolute proof is unavailable.
-- If several evidence sources strongly support a probable cause,
-  use a reasonable confidence such as 0.70-0.90.
+- Give a reasonable confidence based on the strength of evidence.
 - Confidence must be between 0 and 1.
 - Keep the response concise.
+- Return the confidence value on the SAME LINE as CONFIDENCE:.
 
 HUMAN REVIEW RULES:
-- If human review feedback is provided, use it when revising the RCA.
-- Re-evaluate the previous root-cause hypothesis using the feedback.
-- Do not blindly accept the human feedback if it conflicts with the evidence.
+- Consider human review feedback when revising the RCA.
+- Do not blindly accept feedback that conflicts with evidence.
 - Preserve evidence-supported conclusions.
-- If the human reviewer requests additional investigation,
-  clearly reflect the requested evidence in MISSING_EVIDENCE.
-- The revised RCA should improve on the previous RCA rather than
-  simply repeating it.
 
 INCIDENT
 ID: {state.get("incident_id", "")}
 Service: {state.get("service", "")}
 Description: {state.get("description", "")}
 Severity: {state.get("severity", "")}
+
 HUMAN REVIEW FEEDBACK
 {human_feedback if human_feedback else "No human rework feedback provided."}
 
@@ -179,39 +149,35 @@ RAG KNOWLEDGE
 
 Return ONLY:
 
-ROOT_CAUSE:
-<most likely root cause>
-
-CONFIDENCE:
-<decimal between 0 and 1>
-
-ALTERNATIVE:
-<realistic alternative hypothesis>
-
-ALTERNATIVE_CONFIDENCE:
-<decimal between 0 and 1>
-
-RATIONALE:
-<short explanation based on the evidence>
-
-MISSING_EVIDENCE:
-<short list of evidence needed for stronger confirmation>
+ROOT_CAUSE: <most likely root cause>
+CONFIDENCE: <decimal between 0 and 1>
+ALTERNATIVE: <realistic alternative hypothesis>
+ALTERNATIVE_CONFIDENCE: <decimal between 0 and 1>
+RATIONALE: <short explanation based on evidence>
+MISSING_EVIDENCE: <evidence needed for stronger confirmation>
 """
 
     try:
         response = llm.invoke(prompt)
         text = _extract_content(response)
+
     except Exception as exc:
         error_message = (
-            f"Root-cause analysis could not be generated because "
+            "Root-cause analysis could not be generated because "
             f"the LLM request failed: {type(exc).__name__}: {exc}"
         )
+
         return {
-            "root_cause": "RCA could not be generated because the LLM request failed.",
+            "root_cause": (
+                "RCA could not be generated because "
+                "the LLM request failed."
+            ),
             "confidence": 0.0,
             "hypotheses": [],
             "root_cause_rationale": error_message,
-            "missing_evidence": "A successful LLM response is required to generate the RCA.",
+            "missing_evidence": (
+                "A successful LLM response is required."
+            ),
             "root_cause_agent_message": error_message,
             "investigation_status": "root_cause_analysis_failed",
             "next_action": "critic_review",
@@ -236,49 +202,43 @@ MISSING_EVIDENCE:
 
         if upper.startswith("ROOT_CAUSE:"):
             current_section = "root_cause"
-            root_cause = line.split(
-                ":", 1
-            )[1].strip()
+            root_cause = line.split(":", 1)[1].strip()
 
         elif upper.startswith("CONFIDENCE:"):
             current_section = "confidence"
             confidence = _parse_confidence(
                 line.split(":", 1)[1]
             )
+            if confidence > 0:
+                current_section = ""
 
-        elif upper.startswith(
-            "ALTERNATIVE_CONFIDENCE:"
-        ):
-            current_section = (
-                "alternative_confidence"
+        elif upper.startswith("ALTERNATIVE_CONFIDENCE:"):
+            current_section = "alternative_confidence"
+            alternative_confidence = _parse_confidence(
+                line.split(":", 1)[1]
             )
-            alternative_confidence = (
-                _parse_confidence(
-                    line.split(":", 1)[1]
-                )
-            )
+            if alternative_confidence > 0:
+                current_section = ""
 
         elif upper.startswith("ALTERNATIVE:"):
             current_section = "alternative"
-            alternative = line.split(
-                ":", 1
-            )[1].strip()
+            alternative = line.split(":", 1)[1].strip()
 
         elif upper.startswith("RATIONALE:"):
             current_section = "rationale"
-            rationale = line.split(
-                ":", 1
-            )[1].strip()
+            rationale = line.split(":", 1)[1].strip()
 
-        elif upper.startswith(
-            "MISSING_EVIDENCE:"
-        ):
-            current_section = (
-                "missing_evidence"
-            )
-            missing_evidence = line.split(
-                ":", 1
-            )[1].strip()
+        elif upper.startswith("MISSING_EVIDENCE:"):
+            current_section = "missing_evidence"
+            missing_evidence = line.split(":", 1)[1].strip()
+
+        elif current_section == "confidence":
+            confidence = _parse_confidence(line)
+            current_section = ""
+
+        elif current_section == "alternative_confidence":
+            alternative_confidence = _parse_confidence(line)
+            current_section = ""
 
         elif current_section == "root_cause":
             root_cause += " " + line
@@ -292,16 +252,11 @@ MISSING_EVIDENCE:
         elif current_section == "missing_evidence":
             missing_evidence += " " + line
 
-    confidence = max(
-        0.0,
-        min(1.0, confidence),
-    )
+    confidence = max(0.0, min(1.0, confidence))
+
     alternative_confidence = max(
         0.0,
-        min(
-            1.0,
-            alternative_confidence,
-        ),
+        min(1.0, alternative_confidence),
     )
 
     if not root_cause:
@@ -373,18 +328,8 @@ if __name__ == "__main__":
     print("ROOT CAUSE:")
     print(result.get("root_cause"))
 
-    print()
-    print("CONFIDENCE:")
+    print("\nCONFIDENCE:")
     print(result.get("confidence"))
 
-    print()
-    print("ALTERNATIVE:")
-    print(
-        result.get(
-            "hypotheses",
-            [{}],
-        )[1].get(
-            "root_cause",
-            "",
-        )
-    )
+    print("\nHYPOTHESES:")
+    print(result.get("hypotheses"))
