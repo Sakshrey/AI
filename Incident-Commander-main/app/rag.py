@@ -4,8 +4,8 @@ from pathlib import Path
 from typing import Any
 
 from langchain_core.documents import Document
-from langchain_core.embeddings import FakeEmbeddings
-from langchain_core.vectorstores import InMemoryVectorStore
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
 
 from app.config import settings
 
@@ -46,30 +46,13 @@ def load_knowledge_documents() -> list[Document]:
     return documents
 
 
-def build_vector_store(
-    documents: list[Document] | None = None,
-) -> InMemoryVectorStore:
-    """Build an in-memory vector store from knowledge documents."""
-
-    if documents is None:
-        documents = load_knowledge_documents()
-
-    vector_store = InMemoryVectorStore(
-        embedding=FakeEmbeddings(size=384)
-    )
-
-    if documents:
-        vector_store.add_documents(documents)
-
-    return vector_store
-
-
 def retrieve_knowledge(
     query: str,
     k: int | None = None,
 ) -> list[dict[str, Any]]:
     """
-    Retrieve knowledge documents relevant to a query.
+    Retrieve knowledge documents relevant to a query using
+    TF-IDF vectors and cosine similarity.
 
     Returns document content together with source metadata.
     """
@@ -87,30 +70,34 @@ def retrieve_knowledge(
 
     k = max(1, min(k, len(documents)))
 
-    vector_store = build_vector_store(documents)
-
-    results = vector_store.similarity_search(
-        query,
-        k=k,
+    vectorizer = TfidfVectorizer(
+        stop_words="english",
+        ngram_range=(1, 2),
+        sublinear_tf=True,
     )
+
+    matrix = vectorizer.fit_transform(
+        [document.page_content for document in documents]
+    )
+
+    scores = cosine_similarity(
+        vectorizer.transform([query]),
+        matrix,
+    )[0]
+
+    ranked = sorted(
+        zip(documents, scores),
+        key=lambda pair: -pair[1],
+    )[:k]
 
     return [
         {
             "content": document.page_content,
-            "source": document.metadata.get(
-                "source",
-                "",
-            ),
-            "filename": document.metadata.get(
-                "filename",
-                "",
-            ),
-            "category": document.metadata.get(
-                "category",
-                "",
-            ),
+            "source": document.metadata.get("source", ""),
+            "filename": document.metadata.get("filename", ""),
+            "category": document.metadata.get("category", ""),
         }
-        for document in results
+        for document, _score in ranked
     ]
 
 
